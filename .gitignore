@@ -1,0 +1,33 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Electron runtime files
+Cache/
+*Cache*/
+databases/
+Dictionaries/
+IndexedDB/
+"Service Worker"/
+"Shared Dictionary"/
+SharedStorage
+TransportSecurity
+"Trust Tokens"*
+WebStorage/
+"Network Persistent State"
+Preferences
+blob_storage/
+temp/
+Session Storage/
+*.log
+Cookies*
+.org.chromium*
+Crashpad/
+GPUCache/
+DawnCache/
+"Local Storage"/
