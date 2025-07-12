@@ -123,6 +123,33 @@ class FlockTrayWindow:
         
         print(f"Showing notification: {title} - {body}")
         
+        # Debug: Let's see what methods/properties are available on the notification object
+        print("Notification object type:", type(notification))
+        print("Notification methods/properties:", [attr for attr in dir(notification) if not attr.startswith('_')])
+        
+        # Try to get more data
+        try:
+            # Check for tag (might contain user ID or other info)
+            if hasattr(notification, 'get_tag'):
+                tag = notification.get_tag()
+                print(f"Notification tag: {tag}")
+            
+            # Check for icon URL
+            if hasattr(notification, 'get_icon'):
+                icon = notification.get_icon()
+                print(f"Notification icon: {icon}")
+            
+            # Check for any other properties
+            if hasattr(notification, 'get_lang'):
+                lang = notification.get_lang()
+                print(f"Notification lang: {lang}")
+                
+            if hasattr(notification, 'get_id'):
+                notif_id = notification.get_id()
+                print(f"Notification ID: {notif_id}")
+        except Exception as e:
+            print(f"Error exploring notification: {e}")
+        
         # For now, just use the default icon
         # WebKit2 Python bindings have issues with getting icon data from notifications
         icon_path = "/home/pranav/.config/flock-native/icon.png"
