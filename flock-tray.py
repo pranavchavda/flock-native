@@ -133,23 +133,21 @@ class FlockTrayWindow:
         try:
             # Try to get icon URL from notification tag or other properties
             # Since WebKit2 doesn't expose icon directly, we'll extract it from the page
+            # Simpler approach - get the most recent message avatar
             js_code = """
             (function() {
-                // Look for recent notification with matching text
-                const notifications = document.querySelectorAll('.notification-avatar img, .message-avatar img, [class*="avatar"] img');
-                for (let img of notifications) {
-                    const parent = img.closest('.message, .notification, [class*="message"]');
-                    if (parent && parent.textContent.includes('%s')) {
-                        return img.src;
-                    }
+                // Get avatars from recent messages
+                const avatars = document.querySelectorAll('img[src*="avatar"], img[src*="profile"], img.avatar, .avatar img');
+                // Return the last (most recent) avatar URL
+                if (avatars.length > 0) {
+                    return avatars[avatars.length - 1].src;
                 }
-                // Fallback: get the most recent avatar
-                const recentAvatar = document.querySelector('.message:last-child img[src*="avatar"], .chat-message:last-child img');
-                return recentAvatar ? recentAvatar.src : null;
+                return null;
             })();
-            """ % (body[:30].replace("'", "\\'").replace('"', '\\"'))
+            """
             
-            self.webview.evaluate_javascript(js_code, -1, None, None, self._on_avatar_url_ready, (notification, title, body))
+            # evaluate_javascript needs: script, length, cancellable, callback, user_data
+            self.webview.evaluate_javascript(js_code, len(js_code), None, self._on_avatar_url_ready, (notification, title, body))
             return True
         except Exception as e:
             print(f"Error getting avatar: {e}")
@@ -240,7 +238,7 @@ class FlockTrayWindow:
                         
                         return false;
                     })();
-                """, -1, None, None, self.on_unread_check_finished, None)
+                """, -1, None, self.on_unread_check_finished, None)
             except:
                 pass  # Page might be loading
             
