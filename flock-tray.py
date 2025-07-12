@@ -4,9 +4,6 @@ import gi
 import threading
 import time
 import re
-import os
-import tempfile
-import urllib.request
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.0')
@@ -126,76 +123,18 @@ class FlockTrayWindow:
         
         print(f"Showing notification: {title} - {body}")
         
-        # Try to get the icon URL from the notification
-        icon_path = "/home/pranav/.config/flock-native/icon.png"  # Default icon
+        # For now, just use the default icon
+        # WebKit2 Python bindings have issues with getting icon data from notifications
+        icon_path = "/home/pranav/.config/flock-native/icon.png"
         
-        # WebKit2 notifications may have an icon URL
-        try:
-            # Try to get icon URL from notification tag or other properties
-            # Since WebKit2 doesn't expose icon directly, we'll extract it from the page
-            # Simpler approach - get the most recent message avatar
-            js_code = """
-            (function() {
-                // Get avatars from recent messages
-                const avatars = document.querySelectorAll('img[src*="avatar"], img[src*="profile"], img.avatar, .avatar img');
-                // Return the last (most recent) avatar URL
-                if (avatars.length > 0) {
-                    return avatars[avatars.length - 1].src;
-                }
-                return null;
-            })();
-            """
-            
-            # evaluate_javascript needs: script, length, cancellable, callback, user_data
-            self.webview.evaluate_javascript(js_code, len(js_code), None, self._on_avatar_url_ready, (notification, title, body))
-            return True
-        except Exception as e:
-            print(f"Error getting avatar: {e}")
-        
-        # Fallback: show notification without avatar
-        self._show_notification_with_icon(title, body, icon_path)
-        notification.close()
-        return True
-    
-    def _on_avatar_url_ready(self, webview, result, user_data):
-        notification, title, body = user_data
-        try:
-            js_result = webview.evaluate_javascript_finish(result)
-            avatar_url = js_result.to_string() if js_result else None
-            
-            if avatar_url and avatar_url != 'null':
-                # Download avatar to temp file
-                self._download_and_show_notification(title, body, avatar_url)
-            else:
-                self._show_notification_with_icon(title, body, "/home/pranav/.config/flock-native/icon.png")
-        except Exception as e:
-            print(f"Error processing avatar: {e}")
-            self._show_notification_with_icon(title, body, "/home/pranav/.config/flock-native/icon.png")
-        
-        notification.close()
-    
-    def _download_and_show_notification(self, title, body, avatar_url):
-        try:
-            # Create temp file for avatar
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
-                # Download avatar
-                with urllib.request.urlopen(avatar_url, timeout=2) as response:
-                    tmp_file.write(response.read())
-                tmp_path = tmp_file.name
-            
-            # Show notification with avatar
-            self._show_notification_with_icon(title, body, tmp_path)
-            
-            # Clean up temp file after a delay
-            GLib.timeout_add_seconds(10, lambda: os.unlink(tmp_path) if os.path.exists(tmp_path) else None)
-        except Exception as e:
-            print(f"Error downloading avatar: {e}")
-            self._show_notification_with_icon(title, body, "/home/pranav/.config/flock-native/icon.png")
-    
-    def _show_notification_with_icon(self, title, body, icon_path):
+        # Show the notification
         notify = Notify.Notification.new(title, body, icon_path)
         notify.set_urgency(Notify.Urgency.NORMAL)
         notify.show()
+        
+        # Close the WebKit notification (we're handling it ourselves)
+        notification.close()
+        return True
     
     def quit_app(self, widget):
         Notify.uninit()
