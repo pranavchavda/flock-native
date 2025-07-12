@@ -12,6 +12,7 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.0')
 gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Notify', '0.7')
+gi.require_version('PangoCairo', '1.0')
 from gi.repository import Gtk, WebKit2, GLib, AppIndicator3, Notify
 
 try:
@@ -23,6 +24,7 @@ except ImportError:
 
 class FlockTrayWindow:
     def __init__(self):
+        print("Initializing Flock Native...")
         # Initialize notifications
         Notify.init("Flock Native")
         
@@ -218,16 +220,21 @@ class FlockTrayWindow:
     
     def start_unread_monitor(self):
         # Run monitor in a separate thread
+        print("Starting unread message monitor...")
         monitor_thread = threading.Thread(target=self.monitor_unread_messages, daemon=True)
         monitor_thread.start()
+        print("Monitor thread started")
     
     def monitor_unread_messages(self):
+        print("Monitor thread: Waiting 5 seconds for page to load...")
         time.sleep(5)  # Wait for page to load initially
+        print("Monitor thread: Starting to check for unread messages")
         
         while True:
             try:
+                print("Checking for unread messages...")
                 # Execute JavaScript to check for unread messages
-                self.webview.evaluate_javascript("""
+                self.webview.run_javascript("""
                     (function() {
                         // Check for unread badge in title
                         const titleMatch = document.title.match(/\\((\\d+)\\)/);
@@ -252,16 +259,19 @@ class FlockTrayWindow:
                         
                         return false;
                     })();
-                """, -1, None, self.on_unread_check_finished, None)
-            except:
-                pass  # Page might be loading
+                """, None, self.on_unread_check_finished, None)
+                print("JavaScript evaluation scheduled")
+            except Exception as e:
+                print(f"Error executing JavaScript: {e}")
             
+            print("Sleeping for 2 seconds...")
             time.sleep(2)  # Check every 2 seconds
     
     def on_unread_check_finished(self, webview, result, user_data):
         try:
-            js_result = webview.evaluate_javascript_finish(result)
-            has_unread = js_result if isinstance(js_result, bool) else False
+            js_result = webview.run_javascript_finish(result)
+            value = js_result.get_js_value()
+            has_unread = value.to_boolean() if value else False
             
             # Debug logging
             print(f"Unread check result: {js_result}, has_unread: {has_unread}")
