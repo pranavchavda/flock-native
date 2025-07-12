@@ -27,6 +27,13 @@ class FlockTrayWindow:
         settings.set_enable_javascript(True)
         settings.set_javascript_can_open_windows_automatically(True)
         
+        # Set up WebKit context for notifications
+        context = self.webview.get_context()
+        context.set_cache_model(WebKit2.CacheModel.DOCUMENT_VIEWER)
+        
+        # Handle permission requests (for notifications)
+        self.webview.connect("permission-request", self.on_permission_request)
+        
         # Load Flock
         self.webview.load_uri("https://web.flock.com")
         
@@ -87,6 +94,13 @@ class FlockTrayWindow:
         # Hide window instead of closing
         self.toggle_window()
         return True  # Prevent default close
+    
+    def on_permission_request(self, webview, request):
+        # Allow notification permissions
+        if isinstance(request, WebKit2.NotificationPermissionRequest):
+            request.allow()
+            return True
+        return False
     
     def quit_app(self, widget):
         Gtk.main_quit()

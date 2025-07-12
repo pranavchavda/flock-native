@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Flock Native
+Comment=Native Flock Chat client with system tray
+Exec=/home/pranav/.config/flock-native/run-flock-tray.sh
+Icon=/home/pranav/.config/flock-native/icon.png
+Type=Application
+Categories=Network;Chat;InstantMessaging;
+StartupNotify=true
+StartupWMClass=flock-native
+MimeType=x-scheme-handler/flock;
