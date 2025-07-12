@@ -23,7 +23,8 @@ This Electron wrapper runs Flock's web app natively on your system, bypassing Sn
 ### Prerequisites
 
 - Node.js and npm (for Electron version)
-- Python 3 with GTK bindings (for simple version)
+- Python 3 with GTK bindings (for Python versions)
+- AppIndicator3 (for Python tray version): `sudo pacman -S libappindicator-gtk3`
 - Git
 
 ### Quick Install
@@ -83,15 +84,30 @@ The app monitors for unread messages by checking:
   - Show/Hide window
   - Quit application
 
-## Alternative: Simple Python Version
+## Alternative: Python Versions
 
-If you don't want to install Node.js, there's a lightweight Python/GTK version:
+If you don't want to install Node.js, there are Python/GTK alternatives:
+
+### Python with Tray Support (Recommended)
+
+```bash
+python3 ~/.config/flock-native/flock-tray.py
+```
+
+This version includes:
+- System tray icon with unread message indicators (same as Electron version)
+- Minimize to tray functionality
+- Right-click menu on tray icon
+
+**Dependencies**: `python3-gi`, `gir1.2-appindicator3-0.1`, `gir1.2-webkit2-4.0`
+
+### Simple Python Version (No Tray)
 
 ```bash
 python3 ~/.config/flock-native/flock-simple.py
 ```
 
-Note: The Python version doesn't include tray support or unread indicators.
+A minimal version without tray support - just a simple browser window.
 
 ## Troubleshooting
 
