@@ -8,10 +8,14 @@ import re
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.0')
 gi.require_version('AppIndicator3', '0.1')
-from gi.repository import Gtk, WebKit2, GLib, AppIndicator3
+gi.require_version('Notify', '0.7')
+from gi.repository import Gtk, WebKit2, GLib, AppIndicator3, Notify
 
 class FlockTrayWindow:
     def __init__(self):
+        # Initialize notifications
+        Notify.init("Flock Native")
+        
         self.window = Gtk.Window()
         self.window.set_title("Flock")
         self.window.set_default_size(1200, 800)
@@ -31,8 +35,17 @@ class FlockTrayWindow:
         context = self.webview.get_context()
         context.set_cache_model(WebKit2.CacheModel.DOCUMENT_VIEWER)
         
+        # Initialize notification permission
+        context.initialize_notification_permissions([
+            WebKit2.SecurityOrigin.new_for_uri("https://web.flock.com"),
+            WebKit2.SecurityOrigin.new_for_uri("https://flock.com")
+        ], [])
+        
         # Handle permission requests (for notifications)
         self.webview.connect("permission-request", self.on_permission_request)
+        
+        # Handle show-notification signal
+        self.webview.connect("show-notification", self.on_show_notification)
         
         # Load Flock
         self.webview.load_uri("https://web.flock.com")
@@ -98,11 +111,29 @@ class FlockTrayWindow:
     def on_permission_request(self, webview, request):
         # Allow notification permissions
         if isinstance(request, WebKit2.NotificationPermissionRequest):
+            print("Notification permission requested - allowing")
             request.allow()
             return True
         return False
     
+    def on_show_notification(self, webview, notification):
+        # Handle WebKit notification and show it via libnotify
+        title = notification.get_title()
+        body = notification.get_body()
+        
+        print(f"Showing notification: {title} - {body}")
+        
+        # Create and show notification through libnotify
+        notify = Notify.Notification.new(title, body, "/home/pranav/.config/flock-native/icon.png")
+        notify.set_urgency(Notify.Urgency.NORMAL)
+        notify.show()
+        
+        # Close the WebKit notification (we're handling it ourselves)
+        notification.close()
+        return True
+    
     def quit_app(self, widget):
+        Notify.uninit()
         Gtk.main_quit()
         sys.exit(0)
     
