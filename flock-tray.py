@@ -24,7 +24,6 @@ except ImportError:
 
 class FlockTrayWindow:
     def __init__(self):
-        print("Initializing Flock Native...")
         # Initialize notifications
         Notify.init("Flock Native")
         
@@ -123,7 +122,6 @@ class FlockTrayWindow:
     def on_permission_request(self, webview, request):
         # Allow notification permissions
         if isinstance(request, WebKit2.NotificationPermissionRequest):
-            print("Notification permission requested - allowing")
             request.allow()
             return True
         return False
@@ -220,19 +218,14 @@ class FlockTrayWindow:
     
     def start_unread_monitor(self):
         # Run monitor in a separate thread
-        print("Starting unread message monitor...")
         monitor_thread = threading.Thread(target=self.monitor_unread_messages, daemon=True)
         monitor_thread.start()
-        print("Monitor thread started")
     
     def monitor_unread_messages(self):
-        print("Monitor thread: Waiting 5 seconds for page to load...")
         time.sleep(5)  # Wait for page to load initially
-        print("Monitor thread: Starting to check for unread messages")
         
         while True:
             try:
-                print("Checking for unread messages...")
                 # Execute JavaScript to check for unread messages
                 self.webview.run_javascript("""
                     (function() {
@@ -260,11 +253,9 @@ class FlockTrayWindow:
                         return false;
                     })();
                 """, None, self.on_unread_check_finished, None)
-                print("JavaScript evaluation scheduled")
-            except Exception as e:
-                print(f"Error executing JavaScript: {e}")
+            except:
+                pass  # Page might be loading
             
-            print("Sleeping for 2 seconds...")
             time.sleep(2)  # Check every 2 seconds
     
     def on_unread_check_finished(self, webview, result, user_data):
@@ -273,16 +264,12 @@ class FlockTrayWindow:
             value = js_result.get_js_value()
             has_unread = value.to_boolean() if value else False
             
-            # Debug logging
-            print(f"Unread check result: {js_result}, has_unread: {has_unread}")
-            
             # Update tray icon on main thread
             GLib.idle_add(self.update_tray_icon, has_unread)
-        except Exception as e:
-            print(f"Error in unread check: {e}")
+        except:
+            pass
     
     def update_tray_icon(self, has_unread):
-        print(f"Updating tray icon - has_unread: {has_unread}")
         if has_unread:
             self.indicator.set_icon_full("/home/pranav/.config/flock-native/tray-icon-green.png", "Unread messages")
         else:
