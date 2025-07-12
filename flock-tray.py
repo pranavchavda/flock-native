@@ -226,7 +226,7 @@ class FlockTrayWindow:
         while True:
             try:
                 # Execute JavaScript to check for unread messages
-                self.webview.run_javascript("""
+                self.webview.evaluate_javascript("""
                     (function() {
                         // Check for unread badge in title
                         const titleMatch = document.title.match(/\\((\\d+)\\)/);
@@ -251,7 +251,7 @@ class FlockTrayWindow:
                         
                         return false;
                     })();
-                """, None, self.on_unread_check_finished, None)
+                """, -1, None, self.on_unread_check_finished, None)
             except:
                 pass  # Page might be loading
             
@@ -259,9 +259,8 @@ class FlockTrayWindow:
     
     def on_unread_check_finished(self, webview, result, user_data):
         try:
-            js_result = webview.run_javascript_finish(result)
-            value = js_result.get_js_value()
-            has_unread = value.to_boolean()
+            js_result = webview.evaluate_javascript_finish(result)
+            has_unread = js_result if isinstance(js_result, bool) else False
             
             # Update tray icon on main thread
             GLib.idle_add(self.update_tray_icon, has_unread)
