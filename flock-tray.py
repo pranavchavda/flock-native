@@ -4,6 +4,9 @@ import gi
 import threading
 import time
 import re
+import os
+import tempfile
+import urllib.request
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.0')
@@ -123,14 +126,78 @@ class FlockTrayWindow:
         
         print(f"Showing notification: {title} - {body}")
         
-        # Create and show notification through libnotify
-        notify = Notify.Notification.new(title, body, "/home/pranav/.config/flock-native/icon.png")
-        notify.set_urgency(Notify.Urgency.NORMAL)
-        notify.show()
+        # Try to get the icon URL from the notification
+        icon_path = "/home/pranav/.config/flock-native/icon.png"  # Default icon
         
-        # Close the WebKit notification (we're handling it ourselves)
+        # WebKit2 notifications may have an icon URL
+        try:
+            # Try to get icon URL from notification tag or other properties
+            # Since WebKit2 doesn't expose icon directly, we'll extract it from the page
+            js_code = """
+            (function() {
+                // Look for recent notification with matching text
+                const notifications = document.querySelectorAll('.notification-avatar img, .message-avatar img, [class*="avatar"] img');
+                for (let img of notifications) {
+                    const parent = img.closest('.message, .notification, [class*="message"]');
+                    if (parent && parent.textContent.includes('%s')) {
+                        return img.src;
+                    }
+                }
+                // Fallback: get the most recent avatar
+                const recentAvatar = document.querySelector('.message:last-child img[src*="avatar"], .chat-message:last-child img');
+                return recentAvatar ? recentAvatar.src : null;
+            })();
+            """ % (body[:30].replace("'", "\\'").replace('"', '\\"'))
+            
+            self.webview.evaluate_javascript(js_code, -1, None, None, self._on_avatar_url_ready, (notification, title, body))
+            return True
+        except Exception as e:
+            print(f"Error getting avatar: {e}")
+        
+        # Fallback: show notification without avatar
+        self._show_notification_with_icon(title, body, icon_path)
         notification.close()
         return True
+    
+    def _on_avatar_url_ready(self, webview, result, user_data):
+        notification, title, body = user_data
+        try:
+            js_result = webview.evaluate_javascript_finish(result)
+            avatar_url = js_result.to_string() if js_result else None
+            
+            if avatar_url and avatar_url != 'null':
+                # Download avatar to temp file
+                self._download_and_show_notification(title, body, avatar_url)
+            else:
+                self._show_notification_with_icon(title, body, "/home/pranav/.config/flock-native/icon.png")
+        except Exception as e:
+            print(f"Error processing avatar: {e}")
+            self._show_notification_with_icon(title, body, "/home/pranav/.config/flock-native/icon.png")
+        
+        notification.close()
+    
+    def _download_and_show_notification(self, title, body, avatar_url):
+        try:
+            # Create temp file for avatar
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                # Download avatar
+                with urllib.request.urlopen(avatar_url, timeout=2) as response:
+                    tmp_file.write(response.read())
+                tmp_path = tmp_file.name
+            
+            # Show notification with avatar
+            self._show_notification_with_icon(title, body, tmp_path)
+            
+            # Clean up temp file after a delay
+            GLib.timeout_add_seconds(10, lambda: os.unlink(tmp_path) if os.path.exists(tmp_path) else None)
+        except Exception as e:
+            print(f"Error downloading avatar: {e}")
+            self._show_notification_with_icon(title, body, "/home/pranav/.config/flock-native/icon.png")
+    
+    def _show_notification_with_icon(self, title, body, icon_path):
+        notify = Notify.Notification.new(title, body, icon_path)
+        notify.set_urgency(Notify.Urgency.NORMAL)
+        notify.show()
     
     def quit_app(self, widget):
         Notify.uninit()
@@ -148,7 +215,7 @@ class FlockTrayWindow:
         while True:
             try:
                 # Execute JavaScript to check for unread messages
-                self.webview.run_javascript("""
+                self.webview.evaluate_javascript("""
                     (function() {
                         // Check for unread badge in title
                         const titleMatch = document.title.match(/\\((\\d+)\\)/);
@@ -173,7 +240,7 @@ class FlockTrayWindow:
                         
                         return false;
                     })();
-                """, None, self.on_unread_check_finished, None)
+                """, -1, None, None, self.on_unread_check_finished, None)
             except:
                 pass  # Page might be loading
             
@@ -181,9 +248,8 @@ class FlockTrayWindow:
     
     def on_unread_check_finished(self, webview, result, user_data):
         try:
-            js_result = webview.run_javascript_finish(result)
-            value = js_result.get_js_value()
-            has_unread = value.to_boolean()
+            js_result = webview.evaluate_javascript_finish(result)
+            has_unread = js_result.to_boolean()
             
             # Update tray icon on main thread
             GLib.idle_add(self.update_tray_icon, has_unread)
@@ -192,9 +258,9 @@ class FlockTrayWindow:
     
     def update_tray_icon(self, has_unread):
         if has_unread:
-            self.indicator.set_icon("/home/pranav/.config/flock-native/tray-icon-green.png")
+            self.indicator.set_icon_full("/home/pranav/.config/flock-native/tray-icon-green.png", "Unread messages")
         else:
-            self.indicator.set_icon("/home/pranav/.config/flock-native/tray-icon-mono.png")
+            self.indicator.set_icon_full("/home/pranav/.config/flock-native/tray-icon-mono.png", "No unread messages")
         return False
 
 if __name__ == "__main__":
