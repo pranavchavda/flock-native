@@ -203,7 +203,8 @@ class FlockTrayWindow:
         
         # Show the notification
         notify = Notify.Notification.new(title, body, icon_path)
-        notify.set_urgency(Notify.Urgency.CRITICAL)  # High urgency - requires manual dismissal
+        notify.set_urgency(Notify.Urgency.NORMAL)
+        notify.set_timeout(Notify.EXPIRES_NEVER)  # Stay until dismissed without being red
         notify.show()
         
         # Close the WebKit notification (we're handling it ourselves)
@@ -262,12 +263,16 @@ class FlockTrayWindow:
             js_result = webview.evaluate_javascript_finish(result)
             has_unread = js_result if isinstance(js_result, bool) else False
             
+            # Debug logging
+            print(f"Unread check result: {js_result}, has_unread: {has_unread}")
+            
             # Update tray icon on main thread
             GLib.idle_add(self.update_tray_icon, has_unread)
-        except:
-            pass
+        except Exception as e:
+            print(f"Error in unread check: {e}")
     
     def update_tray_icon(self, has_unread):
+        print(f"Updating tray icon - has_unread: {has_unread}")
         if has_unread:
             self.indicator.set_icon_full("/home/pranav/.config/flock-native/tray-icon-green.png", "Unread messages")
         else:
