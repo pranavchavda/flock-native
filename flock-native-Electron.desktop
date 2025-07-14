@@ -1,7 +1,7 @@
 [Desktop Entry]
-Name=Flock Native
+Name=Flock Native (Electron)
 Comment=Native Flock Chat client with system tray
-Exec=/home/pranav/.config/flock-native/run-flock-tray.sh
+Exec=/home/pranav/.config/flock-native/run-flock.sh
 Icon=/home/pranav/.config/flock-native/icon.png
 Type=Application
 Categories=Network;Chat;InstantMessaging;

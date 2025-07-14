@@ -7,6 +7,8 @@ import re
 import os
 import tempfile
 import hashlib
+import webbrowser
+import subprocess
 
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.0')
@@ -41,6 +43,15 @@ class FlockTrayWindow:
         settings.set_enable_developer_extras(True)
         settings.set_enable_javascript(True)
         settings.set_javascript_can_open_windows_automatically(True)
+        settings.set_allow_file_access_from_file_urls(True)
+        
+        # Enable audio/video
+        settings.set_media_playback_requires_user_gesture(False)
+        settings.set_enable_media(True)
+        settings.set_enable_webaudio(True)
+        
+        # Enable downloads
+        settings.set_enable_write_console_messages_to_stdout(True)
         
         # Set up WebKit context for notifications
         context = self.webview.get_context()
@@ -57,6 +68,21 @@ class FlockTrayWindow:
         
         # Handle show-notification signal
         self.webview.connect("show-notification", self.on_show_notification)
+        
+        # Handle navigation decisions (for external links)
+        self.webview.connect("decide-policy", self.on_navigation_decision)
+        
+        # Handle download requests
+        context.connect("download-started", self.on_download_started)
+        
+        # Enable context menu for debugging
+        self.webview.connect("context-menu", self.on_context_menu)
+        
+        # Handle new window requests
+        self.webview.connect("create", self.on_create_window)
+        
+        # Inject JavaScript to handle downloads
+        self.webview.connect("load-changed", self.on_load_changed)
         
         # Load Flock
         self.webview.load_uri("https://web.flock.com")
@@ -125,6 +151,253 @@ class FlockTrayWindow:
             request.allow()
             return True
         return False
+    
+    def on_navigation_decision(self, webview, decision, decision_type):
+        print(f"Decision type: {decision_type}")
+        
+        if decision_type == WebKit2.PolicyDecisionType.NAVIGATION_ACTION:
+            navigation_action = decision.get_navigation_action()
+            request = navigation_action.get_request()
+            uri = request.get_uri()
+            
+            # Get the navigation type
+            nav_type = navigation_action.get_navigation_type()
+            
+            # Debug print
+            print(f"Navigation action - URI: {uri}, Type: {nav_type}")
+            
+            # Check for download links by looking at the URI
+            if uri and any(pattern in uri.lower() for pattern in ['/download/', 'download=', 'export=', '.pdf', '.zip', '.doc', '.xls']):
+                print(f"Detected download link: {uri}")
+                decision.download()
+                return True
+            
+            # Handle different types of navigation
+            if nav_type in [WebKit2.NavigationType.LINK_CLICKED, 
+                           WebKit2.NavigationType.FORM_SUBMITTED,
+                           WebKit2.NavigationType.OTHER]:
+                # Check if this is an external link (not flock.com)
+                if uri and not any(domain in uri for domain in ['flock.com', 'web.flock.com', 'flockws.com', 'about:blank']):
+                    print(f"Opening external link: {uri}")
+                    # Use subprocess to ensure proper handling
+                    try:
+                        subprocess.run(['xdg-open', uri], check=True)
+                    except subprocess.CalledProcessError:
+                        # Fallback to webbrowser
+                        webbrowser.open(uri)
+                    decision.ignore()
+                    return True
+        
+        elif decision_type == WebKit2.PolicyDecisionType.RESPONSE:
+            # Handle downloads based on response
+            response = decision.get_response()
+            mime_type = response.get_mime_type()
+            uri = response.get_uri()
+            
+            print(f"Response decision - URI: {uri}, MIME: {mime_type}")
+            
+            # Check Content-Disposition header - fix deprecation warning
+            headers = response.get_http_headers()
+            if headers:
+                # Use iterate() method instead of deprecated get()
+                iter = headers.iter()
+                while iter:
+                    name, value = iter.next()
+                    if name and name.lower() == "content-disposition" and value and "attachment" in value:
+                        print(f"Attachment detected: {uri}")
+                        decision.download()
+                        return True
+                    if not iter:
+                        break
+            
+            # Check if this is a downloadable file by MIME type
+            downloadable_mimes = [
+                'application/pdf', 'application/zip', 'application/octet-stream',
+                'application/msword', 'application/vnd.ms-excel', 'image/', 'video/', 'audio/'
+            ]
+            if mime_type and any(mime in mime_type for mime in downloadable_mimes):
+                print(f"Downloadable MIME type: {mime_type}")
+                decision.download()
+                return True
+        
+        # Let WebKit handle by default
+        return False
+    
+    def on_context_menu(self, webview, context_menu, event, hit_test_result):
+        # Debug what was right-clicked
+        if hit_test_result.context_is_image():
+            print("Right-clicked on image")
+        if hit_test_result.context_is_link():
+            print(f"Right-clicked on link: {hit_test_result.get_link_uri()}")
+        
+        # Let the default context menu appear
+        return False
+    
+    def on_create_window(self, webview, navigation_action):
+        # Handle requests to open new windows (target="_blank" links)
+        request = navigation_action.get_request()
+        uri = request.get_uri()
+        
+        print(f"New window requested for: {uri}")
+        
+        if uri:
+            # Open in default browser
+            try:
+                subprocess.run(['xdg-open', uri], check=True)
+            except subprocess.CalledProcessError:
+                webbrowser.open(uri)
+        
+        # Return None to prevent new window creation
+        return None
+    
+    def on_load_changed(self, webview, load_event):
+        if load_event == WebKit2.LoadEvent.FINISHED:
+            # Inject JavaScript to intercept all links
+            script = """
+            (function() {
+                // Log all link clicks for debugging
+                document.addEventListener('click', function(e) {
+                    let target = e.target;
+                    while (target && target.tagName !== 'A') {
+                        target = target.parentElement;
+                    }
+                    
+                    if (target && target.href) {
+                        console.log('Link clicked:', target.href);
+                        console.log('Link target:', target.target);
+                        console.log('Link host:', new URL(target.href).hostname);
+                        
+                        // Check if it's an external link
+                        const url = new URL(target.href);
+                        const currentHost = window.location.hostname;
+                        if (url.hostname !== currentHost && 
+                            !url.hostname.includes('flock.com') &&
+                            !url.hostname.includes('flockws.com')) {
+                            console.log('External link detected, opening in browser');
+                            e.preventDefault();
+                            // Create a temporary link with target="_blank" to trigger navigation
+                            const tempLink = document.createElement('a');
+                            tempLink.href = target.href;
+                            tempLink.target = '_blank';
+                            tempLink.click();
+                            return false;
+                        }
+                        
+                        // Check if it's a download link
+                        if (target.hasAttribute('download') || 
+                            target.href.includes('/download/') ||
+                            target.href.includes('download=') ||
+                            target.href.match(/\.(pdf|zip|doc|docx|xls|xlsx|ppt|pptx|rar|7z|tar|gz)$/i)) {
+                            
+                            console.log('Download link clicked:', target.href);
+                            // Force navigation to trigger our handler
+                            e.preventDefault();
+                            window.location.href = target.href;
+                        }
+                    }
+                }, true);
+                
+                console.log('Link interceptor installed');
+            })();
+            """
+            # Use the new evaluate_javascript method to avoid deprecation
+            self.webview.evaluate_javascript(script, -1, None, None, None, None)
+            
+            # Initialize audio context to ensure notification sounds work
+            audio_init_script = """
+            (function() {
+                // Create and resume audio context to enable sounds
+                if (window.AudioContext || window.webkitAudioContext) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    const audioContext = new AudioContext();
+                    
+                    // Resume audio context (required by some browsers)
+                    if (audioContext.state === 'suspended') {
+                        audioContext.resume().then(() => {
+                            console.log('Audio context resumed');
+                        });
+                    }
+                    
+                    // Try to find and initialize Flock's notification sound
+                    setTimeout(() => {
+                        // Look for audio elements or Flock's sound initialization
+                        const audioElements = document.querySelectorAll('audio');
+                        audioElements.forEach(audio => {
+                            audio.load();
+                            console.log('Preloaded audio element:', audio.src);
+                        });
+                    }, 2000);
+                }
+                
+                console.log('Audio initialization complete');
+            })();
+            """
+            self.webview.evaluate_javascript(audio_init_script, -1, None, None, None, None)
+    
+    def on_download_started(self, context, download):
+        # Get the download details
+        uri = download.get_request().get_uri()
+        
+        # Get suggested filename - method name is different in WebKit2
+        response = download.get_response()
+        suggested_filename = response.get_suggested_filename() if response else None
+        
+        # If no suggested filename, extract from URI
+        if not suggested_filename:
+            from urllib.parse import urlparse, unquote
+            path = urlparse(uri).path
+            suggested_filename = unquote(os.path.basename(path)) or "download"
+        
+        print(f"Download started for URI: {uri}")
+        print(f"Suggested filename: {suggested_filename}")
+        
+        # Set download destination
+        downloads_dir = os.path.expanduser("~/Downloads")
+        if not os.path.exists(downloads_dir):
+            downloads_dir = os.path.expanduser("~")
+        
+        destination = os.path.join(downloads_dir, suggested_filename)
+        
+        # Handle file conflicts
+        base, ext = os.path.splitext(destination)
+        counter = 1
+        while os.path.exists(destination):
+            destination = f"{base} ({counter}){ext}"
+            counter += 1
+        
+        print(f"Saving to: {destination}")
+        download.set_destination(f"file://{destination}")
+        
+        # Connect to download progress signals
+        download.connect("finished", self.on_download_finished, destination)
+        download.connect("failed", self.on_download_failed)
+        
+        return False  # Let WebKit handle the download
+    
+    def on_download_finished(self, download, destination):
+        print(f"Download completed: {destination}")
+        # Show notification
+        notify = Notify.Notification.new(
+            "Download Complete",
+            f"File saved to: {os.path.basename(destination)}",
+            "/home/pranav/.config/flock-native/icon.png"
+        )
+        notify.show()
+        
+        # Open the downloads folder
+        try:
+            subprocess.run(['xdg-open', os.path.dirname(destination)], check=False)
+        except:
+            pass
+    
+    def on_download_failed(self, download, error):
+        print(f"Download failed: {error}")
+        notify = Notify.Notification.new(
+            "Download Failed",
+            "The download could not be completed",
+            "/home/pranav/.config/flock-native/icon.png"
+        )
+        notify.show()
     
     def generate_letter_avatar(self, name, size=48):
         """Generate a letter avatar image for the given name"""
@@ -207,6 +480,19 @@ class FlockTrayWindow:
         notify.set_timeout(Notify.EXPIRES_NEVER)  # Stay until dismissed without being red
         notify.show()
         
+        # Play Flock notification sound
+        sound_file = "/home/pranav/.config/flock-native/notification-sound/onmessage.wav"
+        if os.path.exists(sound_file):
+            try:
+                # Use paplay (PulseAudio) to play the sound
+                subprocess.Popen(['paplay', sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except:
+                try:
+                    # Fallback to aplay if paplay is not available
+                    subprocess.Popen(['aplay', '-q', sound_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except:
+                    pass
+        
         # Close the WebKit notification (we're handling it ourselves)
         notification.close()
         return True
@@ -227,7 +513,7 @@ class FlockTrayWindow:
         while True:
             try:
                 # Execute JavaScript to check for unread messages
-                self.webview.run_javascript("""
+                self.webview.evaluate_javascript("""
                     (function() {
                         // Check for unread badge in title
                         const titleMatch = document.title.match(/\\((\\d+)\\)/);
@@ -252,7 +538,7 @@ class FlockTrayWindow:
                         
                         return false;
                     })();
-                """, None, self.on_unread_check_finished, None)
+                """, -1, None, self.on_unread_check_finished, None, None)
             except:
                 pass  # Page might be loading
             
@@ -260,8 +546,8 @@ class FlockTrayWindow:
     
     def on_unread_check_finished(self, webview, result, user_data):
         try:
-            js_result = webview.run_javascript_finish(result)
-            value = js_result.get_js_value()
+            # Use the new method for WebKit2 4.0
+            value = webview.evaluate_javascript_finish(result)
             has_unread = value.to_boolean() if value else False
             
             # Update tray icon on main thread
