@@ -77,6 +77,14 @@ The app monitors for unread messages by checking:
 - DOM elements with unread indicators
 - Badge counts in the sidebar
 
+### LanguageTool Integration (Electron Version)
+
+The Electron version includes built-in LanguageTool support for grammar and spell checking:
+- **Automatic download**: LanguageTool server is downloaded on first run if not present
+- **Local server**: Runs LanguageTool locally on port 8081 for privacy and speed
+- **Seamless integration**: Works automatically with text inputs in Flock
+- **No external dependencies**: Self-contained Java runtime included with LanguageTool
+
 ### Window Management
 
 - **Close to tray**: Closing the window minimizes to tray instead of quitting

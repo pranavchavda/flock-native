@@ -31,3 +31,6 @@ Crashpad/
 GPUCache/
 DawnCache/
 "Local Storage"/
+
+# LanguageTool
+languagetool/
