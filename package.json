@@ -8,6 +8,7 @@
     "install-electron": "npm install electron"
   },
   "dependencies": {
-    "electron": "^28.3.3"
+    "electron": "^28.3.3",
+    "electron-context-menu": "^4.1.0"
   }
 }

@@ -15,7 +15,7 @@ gi.require_version('WebKit2', '4.0')
 gi.require_version('AppIndicator3', '0.1')
 gi.require_version('Notify', '0.7')
 gi.require_version('PangoCairo', '1.0')
-from gi.repository import Gtk, WebKit2, GLib, AppIndicator3, Notify
+from gi.repository import Gtk, WebKit2, GLib, AppIndicator3, Notify, Gdk
 
 try:
     from gi.repository import GdkPixbuf, Pango, PangoCairo
@@ -37,13 +37,23 @@ class FlockTrayWindow:
         # Track window visibility
         self.is_visible = True
         
-        # Create WebView
-        self.webview = WebKit2.WebView()
+        # Create a web context with ITP disabled to allow cross-site cookies
+        context = WebKit2.WebContext.new()
+        if hasattr(context, 'get_website_data_manager'):
+            data_manager = context.get_website_data_manager()
+            if hasattr(data_manager, 'set_itp_enabled'):
+                data_manager.set_itp_enabled(False)
+        
+        # Create WebView with the modified context
+        self.webview = WebKit2.WebView.new_with_context(context)
         settings = self.webview.get_settings()
         settings.set_enable_developer_extras(True)
         settings.set_enable_javascript(True)
         settings.set_javascript_can_open_windows_automatically(True)
         settings.set_allow_file_access_from_file_urls(True)
+        
+        # Enable clipboard access
+        settings.set_javascript_can_access_clipboard(True)
         
         # Enable audio/video
         settings.set_media_playback_requires_user_gesture(False)
@@ -90,6 +100,9 @@ class FlockTrayWindow:
         # Add webview to window
         self.window.add(self.webview)
         
+        # Connect to key press events to handle paste
+        self.webview.connect("key-press-event", self.on_key_press)
+        
         # Create system tray
         self.indicator = AppIndicator3.Indicator.new(
             "flock-native",
@@ -103,9 +116,6 @@ class FlockTrayWindow:
         
         # Handle window delete event (close button)
         self.window.connect("delete-event", self.on_window_delete)
-        
-        # Start monitoring for unread messages
-        self.start_unread_monitor()
         
         # Show window
         self.window.show_all()
@@ -150,6 +160,14 @@ class FlockTrayWindow:
         if isinstance(request, WebKit2.NotificationPermissionRequest):
             request.allow()
             return True
+        # Allow clipboard permissions
+        if hasattr(WebKit2, 'ClipboardPermissionRequest') and isinstance(request, WebKit2.ClipboardPermissionRequest):
+            request.allow()
+            return True
+        # Allow media permissions (for clipboard paste of images)
+        if hasattr(WebKit2, 'MediaKeySystemPermissionRequest') and isinstance(request, WebKit2.MediaKeySystemPermissionRequest):
+            request.allow()
+            return True
         return False
     
     def on_navigation_decision(self, webview, decision, decision_type):
@@ -177,7 +195,7 @@ class FlockTrayWindow:
                            WebKit2.NavigationType.FORM_SUBMITTED,
                            WebKit2.NavigationType.OTHER]:
                 # Check if this is an external link (not flock.com)
-                if uri and not any(domain in uri for domain in ['flock.com', 'web.flock.com', 'flockws.com', 'about:blank']):
+                if uri and not uri.startswith('about:') and not any(domain in uri for domain in ['flock.com', 'web.flock.com', 'flockws.com']):
                     print(f"Opening external link: {uri}")
                     # Use subprocess to ensure proper handling
                     try:
@@ -199,16 +217,16 @@ class FlockTrayWindow:
             # Check Content-Disposition header - fix deprecation warning
             headers = response.get_http_headers()
             if headers:
-                # Use iterate() method instead of deprecated get()
-                iter = headers.iter()
-                while iter:
-                    name, value = iter.next()
+                # Use foreach() method to iterate headers
+                def check_header(name, value):
                     if name and name.lower() == "content-disposition" and value and "attachment" in value:
                         print(f"Attachment detected: {uri}")
                         decision.download()
                         return True
-                    if not iter:
-                        break
+                    return False
+                
+                # Use foreach to iterate through headers
+                headers.foreach(check_header)
             
             # Check if this is a downloadable file by MIME type
             downloadable_mimes = [
@@ -252,6 +270,9 @@ class FlockTrayWindow:
     
     def on_load_changed(self, webview, load_event):
         if load_event == WebKit2.LoadEvent.FINISHED:
+            # Start the unread monitor only after the page has fully loaded
+            self.start_unread_monitor()
+
             # Inject JavaScript to intercept all links
             script = """
             (function() {
@@ -287,7 +308,7 @@ class FlockTrayWindow:
                         if (target.hasAttribute('download') || 
                             target.href.includes('/download/') ||
                             target.href.includes('download=') ||
-                            target.href.match(/\.(pdf|zip|doc|docx|xls|xlsx|ppt|pptx|rar|7z|tar|gz)$/i)) {
+                            target.href.match(/\\.(pdf|zip|doc|docx|xls|xlsx|ppt|pptx|rar|7z|tar|gz)$/i)) {
                             
                             console.log('Download link clicked:', target.href);
                             // Force navigation to trigger our handler
@@ -302,6 +323,53 @@ class FlockTrayWindow:
             """
             # Use the new evaluate_javascript method to avoid deprecation
             self.webview.evaluate_javascript(script, -1, None, None, None, None)
+            
+            # Inject clipboard handling enhancement
+            clipboard_script = """
+            (function() {
+                // Override paste event handling to ensure images work
+                document.addEventListener('paste', function(e) {
+                    console.log('Paste event detected');
+                    
+                    // Check if we have clipboard data
+                    if (!e.clipboardData || !e.clipboardData.items) {
+                        console.log('No clipboard data available');
+                        return;
+                    }
+                    
+                    // Log clipboard items
+                    console.log('Clipboard items:', e.clipboardData.items.length);
+                    
+                    for (let i = 0; i < e.clipboardData.items.length; i++) {
+                        const item = e.clipboardData.items[i];
+                        console.log('Item type:', item.type);
+                        
+                        // Handle image paste
+                        if (item.type.indexOf('image') !== -1) {
+                            console.log('Image detected in clipboard');
+                            
+                            // Get the active element
+                            const activeElement = document.activeElement;
+                            
+                            // Check if we're in a contenteditable or input area
+                            if (activeElement && (activeElement.contentEditable === 'true' || 
+                                activeElement.tagName === 'TEXTAREA' || 
+                                activeElement.tagName === 'INPUT')) {
+                                
+                                console.log('Pasting image into editable area');
+                                
+                                // Let the default handler process it
+                                // But ensure the browser doesn't prevent it
+                                e.stopImmediatePropagation();
+                            }
+                        }
+                    }
+                }, true); // Use capture phase to handle before any other listeners
+                
+                console.log('Clipboard handler installed');
+            })();
+            """
+            self.webview.evaluate_javascript(clipboard_script, -1, None, None, None, None)
             
             # Initialize audio context to ensure notification sounds work
             audio_init_script = """
@@ -496,6 +564,159 @@ class FlockTrayWindow:
         # Close the WebKit notification (we're handling it ourselves)
         notification.close()
         return True
+    
+    def on_key_press(self, widget, event):
+        """Handle key press events to intercept paste operations"""
+        from gi.repository import Gdk
+        
+        # Check if Ctrl+V is pressed
+        if event.state & Gdk.ModifierType.CONTROL_MASK and event.keyval == Gdk.KEY_v:
+            # Get clipboard
+            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            
+            # Check if clipboard has an image
+            if clipboard.wait_is_image_available():
+                print("Image detected in clipboard, handling paste")
+                print(f"Clipboard image available: True")
+                
+                # Get the image from clipboard
+                pixbuf = clipboard.wait_for_image()
+                print(f"Got pixbuf: {pixbuf is not None}")
+                if pixbuf:
+                    # Convert image to base64 data URL
+                    import io
+                    import base64
+                    
+                    # Save pixbuf to bytes
+                    success, buffer = pixbuf.save_to_bufferv("png", [], [])
+                    if success:
+                        image_data = buffer
+                    else:
+                        print("Failed to convert image to buffer")
+                        return False
+                    
+                    # Convert to base64
+                    base64_data = base64.b64encode(image_data).decode('utf-8')
+                    data_url = f"data:image/png;base64,{base64_data}"
+                    
+                    # Convert base64 to blob and trigger file upload
+                    script = f"""
+                    (function() {{
+                        console.log('[Image Paste] Starting image paste handler');
+                        
+                        // Show alert to confirm script is running
+                        // alert('Image paste handler triggered!');
+                        
+                        try {{
+                        
+                        // Convert base64 to blob
+                        function base64ToBlob(base64Data, contentType) {{
+                            const byteCharacters = atob(base64Data);
+                            const byteArrays = [];
+                            
+                            for (let offset = 0; offset < byteCharacters.length; offset += 512) {{
+                                const slice = byteCharacters.slice(offset, offset + 512);
+                                const byteNumbers = new Array(slice.length);
+                                
+                                for (let i = 0; i < slice.length; i++) {{
+                                    byteNumbers[i] = slice.charCodeAt(i);
+                                }}
+                                
+                                const byteArray = new Uint8Array(byteNumbers);
+                                byteArrays.push(byteArray);
+                            }}
+                            
+                            return new Blob(byteArrays, {{type: contentType}});
+                        }}
+                        
+                        // Create a File object from the blob
+                        const base64Data = '{base64_data}';
+                        const blob = base64ToBlob(base64Data, 'image/png');
+                        const file = new File([blob], 'pasted-image.png', {{ type: 'image/png' }});
+                        
+                        // Create a synthetic paste event with the file
+                        const dataTransfer = new DataTransfer();
+                        dataTransfer.items.add(file);
+                        
+                        // Try to find file input or trigger paste with file
+                        const activeElement = document.activeElement;
+                        
+                        console.log('[Image Paste] Active element:', activeElement);
+                        console.log('[Image Paste] Active element tag:', activeElement?.tagName);
+                        console.log('[Image Paste] Active element contentEditable:', activeElement?.contentEditable);
+                        
+                        // Look for a file input field that might be hidden
+                        const fileInputs = document.querySelectorAll('input[type="file"]');
+                        console.log('[Image Paste] Found file inputs:', fileInputs.length);
+                        
+                        let fileInput = null;
+                        
+                        // Find the most relevant file input (visible or recently used)
+                        for (let input of fileInputs) {{
+                            const rect = input.getBoundingClientRect();
+                            const style = window.getComputedStyle(input);
+                            console.log('[Image Paste] Checking file input:', input, 'display:', style.display);
+                            
+                            // Check if input is somewhat visible or positioned near active element
+                            if (style.display !== 'none' || 
+                                (activeElement && input.closest('.chat-input, .message-input, [contenteditable]'))) {{
+                                fileInput = input;
+                                break;
+                            }}
+                        }}
+                        
+                        if (fileInput) {{
+                            console.log('[Image Paste] Using file input:', fileInput);
+                            // Programmatically set the file
+                            const dt = new DataTransfer();
+                            dt.items.add(file);
+                            fileInput.files = dt.files;
+                            
+                            // Trigger change event
+                            fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                            console.log('[Image Paste] Triggered change event on file input');
+                        }} else {{
+                            console.log('[Image Paste] No suitable file input found, using paste event fallback');
+                            // Fallback: Create a paste event with file data
+                            const pasteEvent = new ClipboardEvent('paste', {{
+                                clipboardData: dataTransfer,
+                                bubbles: true,
+                                cancelable: true
+                            }});
+                            
+                            if (activeElement) {{
+                                activeElement.dispatchEvent(pasteEvent);
+                                console.log('[Image Paste] Dispatched paste event to active element');
+                            }} else {{
+                                document.dispatchEvent(pasteEvent);
+                                console.log('[Image Paste] Dispatched paste event to document');
+                            }}
+                        }}
+                        
+                        return 'Image paste handler completed';
+                        
+                        }} catch (error) {{
+                            console.error('[Image Paste] Error:', error);
+                            return 'Error: ' + error.toString();
+                        }}
+                    }})();
+                    """
+                    
+                    # Add callback to see JavaScript execution results
+                    def script_finished(webview, result, user_data):
+                        try:
+                            value = webview.evaluate_javascript_finish(result)
+                            print(f"Script execution result: {value}")
+                        except Exception as e:
+                            print(f"Script execution error: {e}")
+                    
+                    self.webview.evaluate_javascript(script, -1, None, script_finished, None, None)
+                    
+                    # Prevent default paste behavior
+                    return True
+            
+        # Let other key events pass through
+        return False
     
     def quit_app(self, widget):
         Notify.uninit()
